@@ -1,22 +1,20 @@
--- Script feito por Kipressao11
+-- Script feito por Kipressao11 (versão corrigida para preservar emoji/prefixo)
 -- Coloque este script em StarterGui (como LocalScript)
 
--- Cria o ScreenGui
+-- Cria o ScreenGui (notificação inicial)
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "Kipressao11_Notification"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = game.Players.LocalPlayer:WaitForChild("PlayerGui")
 
--- Cria o quadro (fundo da notificação)
 local frame = Instance.new("Frame")
 frame.Size = UDim2.new(0, 300, 0, 50)
-frame.Position = UDim2.new(0, 10, 1, -60) -- canto inferior esquerdo
+frame.Position = UDim2.new(0, 10, 1, -60)
 frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 frame.BackgroundTransparency = 0.2
 frame.BorderSizePixel = 0
 frame.Parent = screenGui
 
--- Cria o texto
 local textLabel = Instance.new("TextLabel")
 textLabel.Size = UDim2.new(1, -10, 1, 0)
 textLabel.Position = UDim2.new(0, 5, 0, 0)
@@ -28,7 +26,6 @@ textLabel.Font = Enum.Font.SourceSansBold
 textLabel.TextXAlignment = Enum.TextXAlignment.Left
 textLabel.Parent = frame
 
--- Efeito de aparecer e desaparecer
 frame.BackgroundTransparency = 1
 textLabel.TextTransparency = 1
 
@@ -38,7 +35,7 @@ for i = 1, 10 do
 	task.wait(0.05)
 end
 
-wait(5) -- tempo que fica visível
+wait(5)
 
 for i = 1, 10 do
 	frame.BackgroundTransparency = i * 0.1
@@ -46,13 +43,13 @@ for i = 1, 10 do
 	task.wait(0.05)
 end
 
-screenGui:Destroy() --patrocinio
+screenGui:Destroy()
 
+-- Config ESP
 _G.FriendColor = Color3.fromRGB(0, 0, 255)
 _G.EnemyColor = Color3.fromRGB(255, 0, 0)
 _G.UseTeamColor = true
 
---------------------------------------------------------------------
 local Holder = Instance.new("Folder", game.CoreGui)
 Holder.Name = "ESP"
 
@@ -84,48 +81,169 @@ Tag.Text = "nil"
 Tag.Font = Enum.Font.SourceSansBold
 Tag.TextScaled = false
 
+-- Guardar conexões por jogador para desconectar depois
+local connections = {}
+
+local function findCustomNameTextFromCharacter(character)
+	-- procura por qualquer BillboardGui/TextLabel dentro do character criado pelo jogo
+	for _, child in pairs(character:GetDescendants()) do
+		if child:IsA("TextLabel") and child.Text ~= "" then
+			return child.Text, child -- retorna o texto e a própria TextLabel (para copiar propriedades se quiser)
+		end
+	end
+	return nil, nil
+end
+
+local function safeGetHumanoidDisplayName(character)
+	local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+	if humanoid and humanoid:GetAttribute("DisplayName") ~= nil then
+		-- raramente usado, mas teste atributo caso jogo use
+		return humanoid:GetAttribute("DisplayName")
+	end
+	if humanoid and humanoid.DisplayName then
+		return humanoid.DisplayName
+	end
+	return nil
+end
+
 local LoadCharacter = function(v)
-	repeat wait() until v.Character ~= nil
-	v.Character:WaitForChild("Humanoid")
+	repeat task.wait() until v.Character ~= nil
+	local character = v.Character
+	local humanoid = character:WaitForChild("Humanoid")
 	local vHolder = Holder:FindFirstChild(v.Name)
 	if not vHolder then return end
+	-- limpa conteúdos anteriores e desconecta conns antigas (safety)
+	if connections[v] then
+		for _, c in pairs(connections[v]) do
+			if c and c.Disconnect then
+				pcall(function() c:Disconnect() end)
+			end
+		end
+		connections[v] = nil
+	end
 	vHolder:ClearAllChildren()
+
 	local b = Box:Clone()
 	b.Name = v.Name .. "Box"
-	b.Adornee = v.Character
+	b.Adornee = character
 	b.Parent = vHolder
+
 	local t = NameTag:Clone()
 	t.Name = v.Name .. "NameTag"
 	t.Enabled = true
 	t.Parent = vHolder
-	t.Adornee = v.Character:WaitForChild("Head", 5)
+	local head = character:FindFirstChild("Head")
+	t.Adornee = head or character:FindFirstChildWhichIsA("BasePart")
 	if not t.Adornee then
-		return UnloadCharacter(v)
+		-- sem adorno, limpa e sai
+		return
 	end
 
-	-- Usa DisplayName quando disponível (mantém emoji/prefixo), senão usa Name
-	t.Tag.Text = (v.DisplayName and v.DisplayName ~= "" and v.DisplayName) or v.Name
+	-- Função que determina o texto a ser mostrado (prioridade)
+	local function determineNameText()
+		-- 1) tenta Humanoid.DisplayName
+		local ok, hd = pcall(function() return safeGetHumanoidDisplayName(character) end)
+		if ok and hd and hd ~= "" then
+			return hd
+		end
+		-- 2) tenta Player.DisplayName
+		if v.DisplayName and v.DisplayName ~= "" then
+			return v.DisplayName
+		end
+		-- 3) tenta copiar um TextLabel já existente no character (alguns jogos criam sua própria Billboard com emoji)
+		local customText = findCustomNameTextFromCharacter(character)
+		if customText then
+			return customText
+		end
+		-- 4) fallback para v.Name
+		return v.Name
+	end
 
-	b.Color3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
-	t.Tag.TextColor3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
+	-- aplica texto inicial
+	local nameText = determineNameText()
+	t.Tag.Text = nameText
 
+	-- tenta igualar cor de time
+	local teamColor = v.TeamColor
+	b.Color3 = Color3.new(teamColor.r, teamColor.g, teamColor.b)
+	t.Tag.TextColor3 = Color3.new(teamColor.r, teamColor.g, teamColor.b)
+
+	-- esconde o nome padrão do humanoid (se quiser) — caso remova, comente a linha abaixo
+	pcall(function()
+		character.Humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+	end)
+
+	-- Conexões para atualizar o texto quando algo mudar
+	connections[v] = {}
+
+	-- 1) se Humanoid.DisplayName mudar
+	if humanoid then
+		local ok, conn = pcall(function()
+			return humanoid:GetPropertyChangedSignal("DisplayName"):Connect(function()
+				local newText = determineNameText()
+				t.Tag.Text = newText
+			end)
+		end)
+		if ok and conn then table.insert(connections[v], conn) end
+	end
+
+	-- 2) se Player.DisplayName mudar
+	local ok2, conn2 = pcall(function()
+		return v:GetPropertyChangedSignal("DisplayName"):Connect(function()
+			t.Tag.Text = determineNameText()
+		end)
+	end)
+	if ok2 and conn2 then table.insert(connections[v], conn2) end
+
+	-- 3) se novo Billboard/TextLabel for adicionado no character (jogo pode inserir nome personalizado)
+	local ok3, conn3 = pcall(function()
+		return character.ChildAdded:Connect(function(child)
+			if child:IsA("BillboardGui") or child:IsA("TextLabel") or child:IsA("Folder") then
+				-- pequeno delay para permitir que o TextLabel seja preenchido
+				task.wait(0.05)
+				t.Tag.Text = determineNameText()
+			end
+		end)
+	end)
+	if ok3 and conn3 then table.insert(connections[v], conn3) end
+
+	-- 4) se TeamColor mudar (atualiza cor)
+	local ok4, conn4 = pcall(function()
+		return v:GetPropertyChangedSignal("TeamColor"):Connect(function()
+			local tc = v.TeamColor
+			b.Color3 = Color3.new(tc.r, tc.g, tc.b)
+			t.Tag.TextColor3 = Color3.new(tc.r, tc.g, tc.b)
+		end)
+	end)
+	if ok4 and conn4 then table.insert(connections[v], conn4) end
+
+	-- Atualiza quando Humanoid.Health/MaxHealth mudar (mantive a lógica antiga)
 	local Update
 	local UpdateNameTag = function()
 		if not pcall(function()
-			v.Character.Humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-			local maxh = math.floor(v.Character.Humanoid.MaxHealth)
-			local h = math.floor(v.Character.Humanoid.Health)
+			local maxh = math.floor(humanoid.MaxHealth)
+			local h = math.floor(humanoid.Health)
 		end) then
-			Update:Disconnect()
+			if Update and Update.Disconnect then
+				Update:Disconnect()
+			end
 		end
 	end
 	UpdateNameTag()
-	Update = v.Character.Humanoid.Changed:Connect(UpdateNameTag)
+	Update = humanoid.Changed:Connect(UpdateNameTag)
+	table.insert(connections[v], Update)
 end
 
 local UnloadCharacter = function(v)
+	-- desconecta e limpa
+	if connections[v] then
+		for _, c in pairs(connections[v]) do
+			pcall(function() c:Disconnect() end)
+		end
+		connections[v] = nil
+	end
 	local vHolder = Holder:FindFirstChild(v.Name)
-	if vHolder and (vHolder:FindFirstChild(v.Name .. "Box") ~= nil or vHolder:FindFirstChild(v.Name .. "NameTag") ~= nil) then
+	if vHolder then
 		vHolder:ClearAllChildren()
 	end
 end
@@ -133,21 +251,22 @@ end
 local LoadPlayer = function(v)
 	local vHolder = Instance.new("Folder", Holder)
 	vHolder.Name = v.Name
+
 	v.CharacterAdded:Connect(function()
 		pcall(LoadCharacter, v)
 	end)
 	v.CharacterRemoving:Connect(function()
 		pcall(UnloadCharacter, v)
 	end)
-	-- Recarrega a placa quando muda a TeamColor ou o DisplayName (para captar emojis/prefixos)
 	v.Changed:Connect(function(prop)
 		if prop == "TeamColor" or prop == "DisplayName" then
 			UnloadCharacter(v)
-			wait()
+			task.wait()
 			LoadCharacter(v)
 		end
 	end)
-	LoadCharacter(v)
+	-- carrega agora se já tiver personagem
+	pcall(LoadCharacter, v)
 end
 
 local UnloadPlayer = function(v)
