@@ -88,6 +88,7 @@ local LoadCharacter = function(v)
 	repeat wait() until v.Character ~= nil
 	v.Character:WaitForChild("Humanoid")
 	local vHolder = Holder:FindFirstChild(v.Name)
+	if not vHolder then return end
 	vHolder:ClearAllChildren()
 	local b = Box:Clone()
 	b.Name = v.Name .. "Box"
@@ -101,9 +102,13 @@ local LoadCharacter = function(v)
 	if not t.Adornee then
 		return UnloadCharacter(v)
 	end
-t.Tag.Text = (v.DisplayName and v.DisplayName ~= "" and v.DisplayName) or v.Name
+
+	-- Usa DisplayName quando disponível (mantém emoji/prefixo), senão usa Name
+	t.Tag.Text = (v.DisplayName and v.DisplayName ~= "" and v.DisplayName) or v.Name
+
 	b.Color3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
 	t.Tag.TextColor3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
+
 	local Update
 	local UpdateNameTag = function()
 		if not pcall(function()
@@ -134,8 +139,9 @@ local LoadPlayer = function(v)
 	v.CharacterRemoving:Connect(function()
 		pcall(UnloadCharacter, v)
 	end)
+	-- Recarrega a placa quando muda a TeamColor ou o DisplayName (para captar emojis/prefixos)
 	v.Changed:Connect(function(prop)
-		if prop == "TeamColor" then
+		if prop == "TeamColor" or prop == "DisplayName" then
 			UnloadCharacter(v)
 			wait()
 			LoadCharacter(v)
@@ -198,5 +204,3 @@ while task.wait() do
         end
     end
 end
-
-
