@@ -101,7 +101,7 @@ local LoadCharacter = function(v)
 	if not t.Adornee then
 		return UnloadCharacter(v)
 	end
-	t.Tag.Text = v.Name
+t.Tag.Text = (v.DisplayName and v.DisplayName ~= "" and v.DisplayName) or v.Name
 	b.Color3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
 	t.Tag.TextColor3 = Color3.new(v.TeamColor.r, v.TeamColor.g, v.TeamColor.b)
 	local Update
@@ -198,4 +198,5 @@ while task.wait() do
         end
     end
 end
+
 
