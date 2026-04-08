@@ -1,0 +1,674 @@
+-- ========== MERGED ESP SYSTEM ==========
+-- Combines OLD ESP logic with NEW ESP visuals and UI
+-- Author: Refactored for integration
+
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local TextService = game:GetService("TextService")
+local HttpService = game:GetService("HttpService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ========== CONFIGURATION ==========
+local FILE_NAME = "Kipressao_ESP_Config.json"
+
+local Config = {
+	ESP_Highlight_Enabled = false,
+	ESP_Nick_Enabled = false,
+	ESP_HealthBar_Enabled = false,
+	Highlight_Transparency = 0.5,
+	Panel_Pos = {0.5, -210, 0.5, -160},
+	Minimized_Pos = {0, 10, 0.5, -25}
+}
+
+-- GUI States
+local toggleStates = {
+	EliteHighlights = false,
+	VIPNicks = false,
+	GoldBarz = false
+}
+
+local transparency = 50
+local isMinimized = false
+
+-- Colors
+local Colors = {
+	Background = Color3.fromRGB(10, 10, 10),
+	BackgroundLight = Color3.fromRGB(20, 20, 20),
+	Gold = Color3.fromRGB(251, 191, 36),
+	GoldDark = Color3.fromRGB(184, 134, 11),
+	GoldLight = Color3.fromRGB(255, 215, 0),
+	Red = Color3.fromRGB(220, 38, 38),
+	RedDark = Color3.fromRGB(127, 29, 29),
+	Yellow = Color3.fromRGB(234, 179, 8),
+	White = Color3.fromRGB(255, 255, 255),
+	Black = Color3.fromRGB(0, 0, 0)
+}
+
+local FriendColor = Color3.fromRGB(0, 0, 255)
+local EnemyColor = Color3.fromRGB(255, 0, 0)
+local HealthBarColor = Color3.fromRGB(0, 255, 0)
+
+-- ========== FILE SYSTEM (JSON PERSISTENCE) ==========
+local function SaveConfig()
+	local success, err = pcall(function()
+		if writefile then
+			writefile(FILE_NAME, HttpService:JSONEncode(Config))
+		end
+	end)
+end
+
+local function LoadConfig()
+	local success, content = pcall(function()
+		if readfile and isfile and isfile(FILE_NAME) then
+			return readfile(FILE_NAME)
+		end
+	end)
+	
+	if success and content then
+		local ok, decoded = pcall(function() return HttpService:JSONDecode(content) end)
+		if ok then
+			for k, v in pairs(decoded) do
+				Config[k] = v
+			end
+		end
+	end
+end
+
+LoadConfig()
+
+-- ========== ESP HOLDER ==========
+local ESPHolder = Instance.new("Folder", CoreGui)
+ESPHolder.Name = "MergedESP_Holder"
+
+-- Track ESP instances
+local ESPInstances = {}
+
+-- ========== UI HELPER FUNCTIONS ==========
+local function AddCorner(parent, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius or 12)
+	corner.Parent = parent
+	return corner
+end
+
+local function AddStroke(parent, color, thickness)
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color or Colors.Gold
+	stroke.Thickness = thickness or 2
+	stroke.Parent = parent
+	return stroke
+end
+
+local function AddGradient(parent, color1, color2, rotation)
+	local gradient = Instance.new("UIGradient")
+	gradient.Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, color1),
+		ColorSequenceKeypoint.new(1, color2)
+	})
+	gradient.Rotation = rotation or 90
+	gradient.Parent = parent
+	return gradient
+end
+
+-- ========== ESP CREATION FUNCTIONS ==========
+local function createESP(targetPlayer)
+	if targetPlayer == player or ESPInstances[targetPlayer.Name] then return end
+	if targetPlayer.Character == nil then return end
+	
+	local character = targetPlayer.Character
+	local head = character:FindFirstChild("Head")
+	local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+	
+	if not head or not humanoid then return end
+	
+	local espData = {
+		player = targetPlayer,
+		character = character,
+		humanoid = humanoid,
+		highlight = nil,
+		billboardGui = nil,
+		connections = {}
+	}
+	
+	-- Create Highlight
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "MergedESP_Highlight"
+	highlight.Adornee = character
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Enabled = toggleStates.EliteHighlights
+	highlight.FillTransparency = Config.Highlight_Transparency
+	highlight.OutlineTransparency = Config.Highlight_Transparency
+	highlight.FillColor = targetPlayer.TeamColor.Color
+	highlight.OutlineColor = targetPlayer.TeamColor.Color
+	highlight.Parent = character
+	espData.highlight = highlight
+	
+	-- Create BillboardGui for names and health bar
+	local billboardGui = Instance.new("BillboardGui")
+	billboardGui.Name = "MergedESP_BillboardGui"
+	billboardGui.Size = UDim2.new(0, 200, 0, 60)
+	billboardGui.AlwaysOnTop = true
+	billboardGui.StudsOffset = Vector3.new(0, 3, 0)
+	billboardGui.Enabled = toggleStates.VIPNicks or toggleStates.GoldBarz
+	billboardGui.Adornee = head
+	billboardGui.Parent = ESPHolder
+	espData.billboardGui = billboardGui
+	
+	-- Container
+	local container = Instance.new("Frame", billboardGui)
+	container.Size = UDim2.new(1, 0, 1, 0)
+	container.BackgroundTransparency = 1
+	
+	-- Name Label
+	local nameLabel = Instance.new("TextLabel", container)
+	nameLabel.Name = "NameLabel"
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Size = UDim2.new(1, 0, 0, 14)
+	nameLabel.Font = Enum.Font.SourceSansBold
+	nameLabel.TextSize = 14
+	nameLabel.TextStrokeTransparency = 0.5
+	nameLabel.TextColor3 = targetPlayer.TeamColor.Color
+	nameLabel.Visible = toggleStates.VIPNicks
+	nameLabel.Text = targetPlayer.DisplayName ~= "" and targetPlayer.DisplayName or targetPlayer.Name
+	
+	-- Health Bar Background
+	local healthBG = Instance.new("Frame", container)
+	healthBG.Name = "HealthBG"
+	healthBG.BackgroundColor3 = Color3.fromRGB(50, 0, 0)
+	healthBG.BorderSizePixel = 0
+	healthBG.Size = UDim2.new(0, 50, 0, 3)
+	healthBG.AnchorPoint = Vector2.new(0.5, 0)
+	healthBG.Visible = toggleStates.GoldBarz
+	healthBG.Position = toggleStates.VIPNicks and UDim2.new(0.5, 0, 0, 16) or UDim2.new(0.5, 0, 0, 0)
+	
+	-- Health Bar Fill
+	local healthFill = Instance.new("Frame", healthBG)
+	healthFill.Name = "HealthFill"
+	healthFill.BackgroundColor3 = HealthBarColor
+	healthFill.BorderSizePixel = 0
+	healthFill.Size = UDim2.new(1, 0, 1, 0)
+	
+	-- Update function
+	local function updateESP()
+		if not character.Parent or not humanoid then return end
+		
+		-- Update Highlight
+		if highlight then
+			highlight.Enabled = toggleStates.EliteHighlights
+			highlight.FillTransparency = Config.Highlight_Transparency
+			highlight.OutlineTransparency = Config.Highlight_Transparency
+			highlight.FillColor = targetPlayer.TeamColor.Color
+			highlight.OutlineColor = targetPlayer.TeamColor.Color
+		end
+		
+		-- Update Billboard
+		if billboardGui then
+			billboardGui.Enabled = toggleStates.VIPNicks or toggleStates.GoldBarz
+			nameLabel.Visible = toggleStates.VIPNicks
+			nameLabel.Text = targetPlayer.DisplayName ~= "" and targetPlayer.DisplayName or targetPlayer.Name
+			nameLabel.TextColor3 = targetPlayer.TeamColor.Color
+			
+			-- Update health bar position
+			if toggleStates.VIPNicks then
+				healthBG.Position = UDim2.new(0.5, 0, 0, 16)
+			else
+				healthBG.Position = UDim2.new(0.5, 0, 0, 0)
+			end
+			
+			healthBG.Visible = toggleStates.GoldBarz
+			
+			-- Update health bar fill
+			local healthPercent = math.clamp(humanoid.Health / humanoid.MaxHealth, 0, 1)
+			healthFill.Size = UDim2.new(healthPercent, 0, 1, 0)
+			healthFill.BackgroundColor3 = Color3.fromRGB(255 * (1 - healthPercent), 255 * healthPercent, 0)
+			healthBG.Size = UDim2.new(0, math.max(50, nameLabel.TextBounds.X), 0, 3)
+		end
+		
+		-- Hide default display
+		pcall(function() humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None end)
+	end
+	
+	-- Connect signals
+	table.insert(espData.connections, targetPlayer:GetPropertyChangedSignal("TeamColor"):Connect(updateESP))
+	table.insert(espData.connections, humanoid.HealthChanged:Connect(updateESP))
+	table.insert(espData.connections, humanoid:GetPropertyChangedSignal("MaxHealth"):Connect(updateESP))
+	
+	-- Initial update
+	updateESP()
+	
+	-- Store ESP instance
+	ESPInstances[targetPlayer.Name] = espData
+end
+
+local function updateAllESP()
+	for _, playerESP in pairs(ESPInstances) do
+		if playerESP.character and playerESP.character.Parent then
+			-- Update visibility and transparency based on toggles
+			if playerESP.highlight then
+				playerESP.highlight.Enabled = toggleStates.EliteHighlights
+				playerESP.highlight.FillTransparency = Config.Highlight_Transparency
+				playerESP.highlight.OutlineTransparency = Config.Highlight_Transparency
+			end
+			if playerESP.billboardGui then
+				playerESP.billboardGui.Enabled = toggleStates.VIPNicks or toggleStates.GoldBarz
+				local nameLabel = playerESP.billboardGui:FindFirstChild("Frame"):FindFirstChild("NameLabel")
+				local healthBG = playerESP.billboardGui:FindFirstChild("Frame"):FindFirstChild("HealthBG")
+				if nameLabel then nameLabel.Visible = toggleStates.VIPNicks end
+				if healthBG then healthBG.Visible = toggleStates.GoldBarz end
+			end
+		end
+	end
+end
+
+local function removeESP(targetPlayer)
+	local espData = ESPInstances[targetPlayer.Name]
+	if not espData then return end
+	
+	-- Disconnect all signals
+	for _, connection in pairs(espData.connections) do
+		connection:Disconnect()
+	end
+	
+	-- Destroy GUI elements
+	if espData.highlight then
+		espData.highlight:Destroy()
+	end
+	if espData.billboardGui then
+		espData.billboardGui:Destroy()
+	end
+	
+	ESPInstances[targetPlayer.Name] = nil
+end
+
+-- ========== PLAYER TRACKING ==========
+local function onPlayerAdded(targetPlayer)
+	if targetPlayer == player then return end
+	
+	targetPlayer.CharacterAdded:Connect(function()
+		task.wait(0.1) -- Wait for character to fully load
+		createESP(targetPlayer)
+	end)
+	
+	if targetPlayer.Character then
+		task.spawn(function()
+			task.wait(0.1)
+			createESP(targetPlayer)
+		end)
+	end
+end
+
+local function onPlayerRemoved(targetPlayer)
+	removeESP(targetPlayer)
+end
+
+-- Load existing players
+for _, targetPlayer in pairs(Players:GetPlayers()) do
+	if targetPlayer ~= player then
+		task.spawn(function() onPlayerAdded(targetPlayer) end)
+	end
+end
+
+Players.PlayerAdded:Connect(onPlayerAdded)
+Players.PlayerRemoving:Connect(onPlayerRemoved)
+
+-- ========== UPDATE LOOP ==========
+RunService.RenderStepped:Connect(function()
+	updateAllESP()
+end)
+
+-- ========== GUI SYSTEM ==========
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MergedESP_GUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = playerGui
+
+-- Main Panel
+local MainPanel = Instance.new("Frame")
+MainPanel.Name = "MainPanel"
+MainPanel.Size = UDim2.new(0, 420, 0, 320)
+MainPanel.Position = UDim2.new(0.5, -210, 0.5, -160)
+MainPanel.BackgroundColor3 = Colors.Background
+MainPanel.BorderSizePixel = 0
+MainPanel.Parent = ScreenGui
+AddCorner(MainPanel, 16)
+AddStroke(MainPanel, Colors.Gold, 2)
+
+-- Header
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 50)
+Header.BackgroundColor3 = Colors.BackgroundLight
+Header.BorderSizePixel = 0
+Header.Parent = MainPanel
+AddCorner(Header, 16)
+AddGradient(Header, Colors.BackgroundLight, Color3.fromRGB(30, 25, 15), 90)
+
+-- Title
+local Title = Instance.new("TextLabel")
+Title.Name = "Title"
+Title.Size = UDim2.new(0, 200, 1, 0)
+Title.Position = UDim2.new(0, 15, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "👑 MERGED ESP 👑"
+Title.TextColor3 = Colors.Gold
+Title.TextSize = 18
+Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Header
+
+-- Minimize Button
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Name = "MinimizeBtn"
+MinimizeBtn.Size = UDim2.new(0, 36, 0, 28)
+MinimizeBtn.Position = UDim2.new(1, -90, 0.5, -14)
+MinimizeBtn.BackgroundColor3 = Colors.Yellow
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Colors.Black
+MinimizeBtn.TextSize = 20
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.Parent = Header
+AddCorner(MinimizeBtn, 8)
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Name = "CloseBtn"
+CloseBtn.Size = UDim2.new(0, 36, 0, 28)
+CloseBtn.Position = UDim2.new(1, -48, 0.5, -14)
+CloseBtn.BackgroundColor3 = Colors.Red
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Colors.White
+CloseBtn.TextSize = 16
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = Header
+AddCorner(CloseBtn, 8)
+
+-- Content Container
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1, -30, 1, -65)
+Content.Position = UDim2.new(0, 15, 0, 55)
+Content.BackgroundTransparency = 1
+Content.Parent = MainPanel
+
+local ContentLayout = Instance.new("UIListLayout")
+ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ContentLayout.Padding = UDim.new(0, 15)
+ContentLayout.Parent = Content
+
+-- ========== SLIDER FOR TRANSPARENCY ==========
+local SliderContainer = Instance.new("Frame")
+SliderContainer.Name = "SliderContainer"
+SliderContainer.Size = UDim2.new(1, 0, 0, 50)
+SliderContainer.BackgroundTransparency = 1
+SliderContainer.LayoutOrder = 1
+SliderContainer.Parent = Content
+
+local SliderLabelContainer = Instance.new("Frame")
+SliderLabelContainer.Size = UDim2.new(1, 0, 0, 20)
+SliderLabelContainer.BackgroundTransparency = 1
+SliderLabelContainer.Parent = SliderContainer
+
+local SliderLabel = Instance.new("TextLabel")
+SliderLabel.Size = UDim2.new(0.7, 0, 1, 0)
+SliderLabel.BackgroundTransparency = 1
+SliderLabel.Text = "Highlight Transparency"
+SliderLabel.TextColor3 = Colors.Gold
+SliderLabel.TextSize = 14
+SliderLabel.Font = Enum.Font.GothamMedium
+SliderLabel.TextXAlignment = Enum.TextXAlignment.Left
+SliderLabel.Parent = SliderLabelContainer
+
+local SliderValue = Instance.new("TextLabel")
+SliderValue.Name = "SliderValue"
+SliderValue.Size = UDim2.new(0.3, 0, 1, 0)
+SliderValue.Position = UDim2.new(0.7, 0, 0, 0)
+SliderValue.BackgroundTransparency = 1
+SliderValue.Text = math.floor(Config.Highlight_Transparency * 100) .. "%"
+SliderValue.TextColor3 = Colors.Gold
+SliderValue.TextSize = 14
+SliderValue.Font = Enum.Font.GothamMedium
+SliderValue.TextXAlignment = Enum.TextXAlignment.Right
+SliderValue.Parent = SliderLabelContainer
+
+local SliderTrack = Instance.new("Frame")
+SliderTrack.Name = "SliderTrack"
+SliderTrack.Size = UDim2.new(1, 0, 0, 12)
+SliderTrack.Position = UDim2.new(0, 0, 0, 28)
+SliderTrack.BackgroundColor3 = Colors.BackgroundLight
+SliderTrack.Parent = SliderContainer
+AddCorner(SliderTrack, 6)
+
+local SliderFill = Instance.new("Frame")
+SliderFill.Name = "SliderFill"
+SliderFill.Size = UDim2.new(Config.Highlight_Transparency, 0, 1, 0)
+SliderFill.BackgroundColor3 = Colors.Gold
+SliderFill.Parent = SliderTrack
+AddCorner(SliderFill, 6)
+AddGradient(SliderFill, Colors.GoldDark, Colors.GoldLight, 0)
+
+local SliderThumb = Instance.new("TextLabel")
+SliderThumb.Name = "SliderThumb"
+SliderThumb.Size = UDim2.new(0, 24, 0, 24)
+SliderThumb.Position = UDim2.new(Config.Highlight_Transparency, -12, 0.5, -12)
+SliderThumb.BackgroundColor3 = Colors.Background
+SliderThumb.Text = "👑"
+SliderThumb.TextSize = 14
+SliderThumb.Parent = SliderTrack
+AddCorner(SliderThumb, 12)
+AddStroke(SliderThumb, Colors.Gold, 2)
+
+local SliderButton = Instance.new("TextButton")
+SliderButton.Size = UDim2.new(1, 0, 0, 24)
+SliderButton.Position = UDim2.new(0, 0, 0, 22)
+SliderButton.BackgroundTransparency = 1
+SliderButton.Text = ""
+SliderButton.Parent = SliderContainer
+
+local sliderDragging = false
+
+SliderButton.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		sliderDragging = true
+	end
+end)
+
+SliderButton.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		sliderDragging = false
+		SaveConfig()
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if sliderDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local mousePos = UserInputService:GetMouseLocation()
+		local trackPos = SliderTrack.AbsolutePosition
+		local trackSize = SliderTrack.AbsoluteSize
+		
+		local relativeX = math.clamp((mousePos.X - trackPos.X) / trackSize.X, 0, 1)
+		Config.Highlight_Transparency = relativeX
+		
+		SliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
+		SliderThumb.Position = UDim2.new(relativeX, -12, 0.5, -12)
+		SliderValue.Text = math.floor(relativeX * 100) .. "%"
+		
+		updateAllESP()
+	end
+end)
+
+-- ========== DIVIDER ==========
+local Divider = Instance.new("Frame")
+Divider.Name = "Divider"
+Divider.Size = UDim2.new(1, 0, 0, 2)
+Divider.BackgroundColor3 = Colors.Gold
+Divider.BackgroundTransparency = 0.7
+Divider.LayoutOrder = 2
+Divider.Parent = Content
+AddGradient(Divider, Color3.fromRGB(10, 10, 10), Colors.Gold, 0)
+
+-- ========== TOGGLE CREATION ==========
+local function CreateToggle(name, displayName, layoutOrder)
+	local container = Instance.new("Frame")
+	container.Name = name .. "Toggle"
+	container.Size = UDim2.new(1, 0, 0, 36)
+	container.BackgroundColor3 = Colors.BackgroundLight
+	container.LayoutOrder = layoutOrder
+	container.Parent = Content
+	AddCorner(container, 10)
+	AddStroke(container, Colors.GoldDark, 1)
+	
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0.7, -10, 1, 0)
+	label.Position = UDim2.new(0, 15, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = displayName
+	label.TextColor3 = Colors.Gold
+	label.TextSize = 14
+	label.Font = Enum.Font.GothamMedium
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = container
+	
+	local toggleBg = Instance.new("Frame")
+	toggleBg.Name = "ToggleBg"
+	toggleBg.Size = UDim2.new(0, 50, 0, 24)
+	toggleBg.Position = UDim2.new(1, -65, 0.5, -12)
+	toggleBg.BackgroundColor3 = Colors.RedDark
+	toggleBg.Parent = container
+	AddCorner(toggleBg, 12)
+	
+	local toggleKnob = Instance.new("Frame")
+	toggleKnob.Name = "ToggleKnob"
+	toggleKnob.Size = UDim2.new(0, 20, 0, 20)
+	toggleKnob.Position = UDim2.new(0, 2, 0.5, -10)
+	toggleKnob.BackgroundColor3 = Colors.White
+	toggleKnob.Parent = toggleBg
+	AddCorner(toggleKnob, 10)
+	
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(1, 0, 1, 0)
+	button.BackgroundTransparency = 1
+	button.Text = ""
+	button.Parent = container
+	
+	button.MouseButton1Click:Connect(function()
+		toggleStates[name] = not toggleStates[name]
+		local isOn = toggleStates[name]
+		
+		local tweenInfo = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+		
+		if isOn then
+			TweenService:Create(toggleBg, tweenInfo, {BackgroundColor3 = Colors.Gold}):Play()
+			TweenService:Create(toggleKnob, tweenInfo, {Position = UDim2.new(1, -22, 0.5, -10)}):Play()
+		else
+			TweenService:Create(toggleBg, tweenInfo, {BackgroundColor3 = Colors.RedDark}):Play()
+			TweenService:Create(toggleKnob, tweenInfo, {Position = UDim2.new(0, 2, 0.5, -10)}):Play()
+		end
+		
+		updateAllESP()
+		SaveConfig()
+	end)
+	
+	return container
+end
+
+CreateToggle("EliteHighlights", "Elite Highlights", 3)
+CreateToggle("VIPNicks", "VIP Nicks", 4)
+CreateToggle("GoldBarz", "Gold Barz", 5)
+
+-- ========== HOVER EFFECTS ==========
+local function AddHoverEffect(button, hoverColor, normalColor)
+	button.MouseEnter:Connect(function()
+		TweenService:Create(button, TweenInfo.new(0.15), {BackgroundColor3 = hoverColor}):Play()
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(button, TweenInfo.new(0.15), {BackgroundColor3 = normalColor}):Play()
+	end)
+end
+
+AddHoverEffect(MinimizeBtn, Color3.fromRGB(255, 200, 50), Colors.Yellow)
+AddHoverEffect(CloseBtn, Color3.fromRGB(255, 80, 80), Colors.Red)
+
+-- ========== MINIMIZE LOGIC ==========
+local MinimizedButton = Instance.new("TextButton")
+MinimizedButton.Name = "MinimizedButton"
+MinimizedButton.Size = UDim2.new(0, 60, 0, 60)
+MinimizedButton.Position = UDim2.new(0, 20, 0.5, -30)
+MinimizedButton.BackgroundColor3 = Colors.Background
+MinimizedButton.Text = ""
+MinimizedButton.Visible = false
+MinimizedButton.Parent = ScreenGui
+AddCorner(MinimizedButton, 30)
+AddStroke(MinimizedButton, Colors.Gold, 3)
+
+local MinimizedIcon = Instance.new("TextLabel")
+MinimizedIcon.Size = UDim2.new(1, 0, 1, 0)
+MinimizedIcon.BackgroundTransparency = 1
+MinimizedIcon.Text = "👑"
+MinimizedIcon.TextSize = 28
+MinimizedIcon.Parent = MinimizedButton
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+	isMinimized = true
+	MainPanel.Visible = false
+	MinimizedButton.Visible = true
+end)
+
+MinimizedButton.MouseButton1Click:Connect(function()
+	isMinimized = false
+	MainPanel.Visible = true
+	MinimizedButton.Visible = false
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+	ScreenGui:Destroy()
+	ESPHolder:Destroy()
+end)
+
+-- ========== DRAGGABLE PANEL ==========
+local draggingPanel = false
+local dragStart, startPos
+
+Header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		draggingPanel = true
+		dragStart = input.Position
+		startPos = MainPanel.Position
+	end
+end)
+
+Header.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		draggingPanel = false
+		Config.Panel_Pos = {MainPanel.Position.X.Scale, MainPanel.Position.X.Offset, MainPanel.Position.Y.Scale, MainPanel.Position.Y.Offset}
+		SaveConfig()
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if draggingPanel and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		MainPanel.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- ========== ENTRY ANIMATION ==========
+MainPanel.Position = UDim2.new(0.5, -210, 0.5, -200)
+MainPanel.BackgroundTransparency = 1
+TweenService:Create(MainPanel, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+	Position = UDim2.new(0.5, -210, 0.5, -160),
+	BackgroundTransparency = 0
+}):Play()
+
+print("✓ Merged ESP System loaded successfully!")
